@@ -87,8 +87,9 @@ async function downloadAndUpload(url, folderId, filename) {
 }
 
 client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return; // ← これが大事！
+
   console.log('📩 メッセージ受信:', message.content);
-  if (message.author.bot) return;
 
   const urlMatch = message.content.match(GIGAFILE_PATTERN);
   if (!urlMatch) return;
