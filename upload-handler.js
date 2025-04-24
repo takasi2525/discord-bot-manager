@@ -1,6 +1,5 @@
-require('dotenv').config(); // ← .env を読み込む
-
 // 第1部：基本セットアップ＆Google Sheets連携
+require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { google } = require('googleapis');
 const fs = require('fs');
@@ -95,6 +94,7 @@ client.on(Events.MessageCreate, async (message) => {
   if (!urlMatch) return;
 
   console.log('🔗 ギガファイルURL検出:', urlMatch[0]);
+  await message.reply('📥 ダウンロード中...');
 
   const thread = message.channel;
   const threadName = thread.name;
@@ -131,6 +131,7 @@ client.on(Events.MessageCreate, async (message) => {
   });
   const finalFolderId = folderRes.data.id;
 
+  await message.reply('📤 アップロード中...');
   const fileId = await downloadAndUpload(urlMatch[0], finalFolderId, 'video_data.zip');
 
   message.reply(`✅ ファイルをアップロードしました（Drive ID: ${fileId}）`);
