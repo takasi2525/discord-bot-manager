@@ -1,0 +1,21 @@
+{
+  "name": "keep-thread-active",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@discordjs/rest": "^2.4.3",
+    "axios": "^1.8.4",
+    "discord-api-types": "^0.38.1",
+    "discord.js": "^14.18.0",
+    "googleapis": "^148.0.0",
+    "mime-types": "^3.0.1",
+    "node-cron": "^3.0.3"
+  }
+}
