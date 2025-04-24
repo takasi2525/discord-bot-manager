@@ -1,8 +1,11 @@
+require('dotenv').config(); // ← これを忘れずに！
+
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
-const CLIENT_ID = '1355951116612927790';
-const GUILD_ID = '1343046499138928710';
-const TOKEN = 'MTM1NTk1MTExNjYxMjkyNzc5MA.GUmECr.oAZr0S0ffzZTY3HyVtksaCO0Q4lwYol9E2W8lw';
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
+const TOKEN = process.env.TOKEN;
+
 
 const commands = [
   new SlashCommandBuilder()
@@ -52,3 +55,4 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
     console.error('❌ スラッシュコマンド登録エラー:', error);
   }
 })();
+client.login(TOKEN);

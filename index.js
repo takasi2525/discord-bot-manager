@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 // 第1部：基本セットアップ＆Google Sheets連携
 const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const { google } = require('googleapis');
@@ -12,7 +14,7 @@ const client = new Client({
   ]
 });
 
-const TOKEN = 'MTM1NTk1MTExNjYxMjkyNzc5MA.GUmECr.oAZr0S0ffzZTY3HyVtksaCO0Q4lwYol9E2W8lw';
+const TOKEN = process.env.TOKEN;
 
 const CHANNEL_CONFIG = {
   martin: {
