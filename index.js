@@ -1,5 +1,8 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const {
+  Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle,
+  ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, StringSelectMenuOptionBuilder
+} = require('discord.js');
 const { google } = require('googleapis');
 
 const client = new Client({
@@ -78,14 +81,6 @@ function formatDateFromOption(option) {
   return today.toISOString().split('T')[0];
 }
 
-async function getEditorOptions(spreadsheetId, sheetName, column) {
-  const range = `${sheetName}!${column}6:${column}1000`;
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = response.data.values || [];
-  const names = [...new Set(rows.flat().filter(name => !!name))];
-  return names.slice(0, 25).map(name => new StringSelectMenuOptionBuilder().setLabel(name).setValue(name));
-}
-
 async function getNextAvailableRow(spreadsheetId, sheetName, column) {
   const range = `${sheetName}!${column}6:${column}1000`;
   const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -129,7 +124,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const row = await getNextAvailableRow(spreadsheetId, sheetName, numCol);
       const num = await getNextSheetNumber(spreadsheetId, sheetName, numCol);
-      const overallRow = config.hasOverallSheet ? await getNextAvailableRow(spreadsheetId, overallSheet, 'F') : null;
+      const overallRow = await getNextAvailableRow(spreadsheetId, overallSheet, 'F');
       const threadName = `#${num}_${title}`;
 
       const thread = await interaction.channel.threads.create({
@@ -167,51 +162,18 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      const editorOptions = await getEditorOptions(spreadsheetId, sheetName, type === 'short' ? 'H' : 'I');
-      const thumbOptions = type === 'short' ? [] : await getEditorOptions(spreadsheetId, sheetName, 'K');
-
-      const selectMenus = [
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(`select_date|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
-            .setPlaceholder('📅 初稿提出日を選んでください')
-            .addOptions([
-              { label: '今日', value: 'today' },
-              { label: '明日', value: 'tomorrow' },
-              { label: '明後日', value: 'dayAfterTomorrow' },
-              { label: '来週', value: 'nextWeek' },
-              { label: '入力しない（スキップ）', value: 'none' }
-            ])
-        ),
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(`select_editor|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
-            .setPlaceholder('👤 担当者を選んでください')
-            .addOptions(editorOptions)
-        )
-      ];
-
-      if (thumbOptions.length > 0) {
-        selectMenus.push(
-          new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-              .setCustomId(`select_thumb|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
-              .setPlaceholder('🖼 サムネイル担当を選んでください')
-              .addOptions(thumbOptions)
-          )
-        );
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: `✅ スレッド ${threadName} を作成しました！`, flags: 64 });
       }
 
-      await thread.send({
-        content: '📅 初稿提出日を選択してください：\n👤 担当者を選んでください：' + (thumbOptions.length > 0 ? '\n🖼 サムネイル担当者を選んでください：' : ''),
-        components: selectMenus
-      });
-
-      await interaction.reply({ content: `✅ スレッド ${threadName} を作成しました！`, flags: 64 });
+      // ここでセレクトメニュー表示処理を呼び出す（別途定義されている前提）
+      await sendInitialSelectMenus(thread, config, type, spreadsheetId, sheetName, overallSheet, row, overallRow);
     } catch (error) {
       console.error('❌ モーダル処理エラー:', error);
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: '❌ スレッド作成中にエラーが発生しました。', flags: 64 });
+      } else if (interaction.deferred && !interaction.replied) {
+        await interaction.editReply({ content: '❌ スレッド作成中にエラーが発生しました。' });
       }
     }
   }
