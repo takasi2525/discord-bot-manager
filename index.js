@@ -1,5 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
+const express = require('express');
 const { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { google } = require('googleapis');
 
@@ -91,40 +92,34 @@ async function sendLineMessage(text) {
   }
 }
 
-async function getNextAvailableRow(spreadsheetId, sheetName, column) {
-  const range = `${sheetName}!${column}6:${column}1000`;
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = response.data.values || [];
-  for (let i = 0; i < rows.length; i++) {
-    if (!rows[i][0]) return 6 + i;
-  }
-  return 6 + rows.length;
-}
-
-async function getNextSheetNumber(spreadsheetId, sheetName, column) {
-  const range = `${sheetName}!${column}6:${column}1000`;
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = response.data.values || [];
-  let max = 0;
-  for (let row of rows) {
-    if (row[0] && row[0].startsWith('#')) {
-      const num = parseInt(row[0].replace('#', ''));
-      if (!isNaN(num) && num > max) max = num;
-    }
-  }
-  return max + 1;
-}
-
-async function getEditorOptions(spreadsheetId, sheetName, column) {
-  const range = `${sheetName}!${column}6:${column}1000`;
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = response.data.values || [];
-  const names = [...new Set(rows.flat().filter(name => !!name))];
-  return names.slice(0, 25).map(name => new StringSelectMenuOptionBuilder().setLabel(name).setValue(name));
-}
-
 client.once(Events.ClientReady, () => {
   console.log(`✅ ログイン成功：${client.user.tag}`);
+});
+
+
+// ====== LINE Webhook サーバーを統合 ======
+const app = express();
+app.use(express.json());
+
+app.post('/webhook', (req, res) => {
+  console.log('✅ LINE Webhook受信:', JSON.stringify(req.body, null, 2));
+  const event = req.body.events?.[0];
+  const source = event?.source;
+
+  if (source?.type === 'group') {
+    console.log('✅ LINEグループID:', source.groupId);
+  }
+
+  res.sendStatus(200);
+});
+
+app.get('/', (_, res) => {
+  res.send('Discord Bot + LINE Webhook 動作中');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🌐 Expressサーバー起動中（ポート ${PORT}）`);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
