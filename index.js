@@ -1,16 +1,16 @@
 require('dotenv').config();
-const axios = require('axios');
-const express = require('express');
 const { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { google } = require('googleapis');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 const TOKEN = process.env.TOKEN;
-const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
-const LINE_GROUP_ID = process.env.LINE_GROUP_ID;
 
 const CATEGORY_CONFIG = {
   martin: {
@@ -55,7 +55,10 @@ function getCategoryAndType(channelId) {
 
 const auth = new google.auth.GoogleAuth({
   keyFile: 'credentials.json',
-  scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+  scopes: [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive'
+  ]
 });
 const sheets = google.sheets({ version: 'v4', auth });
 
@@ -71,133 +74,164 @@ function formatDateFromOption(option) {
   return today.toISOString().split('T')[0];
 }
 
-async function sendLineMessage(text) {
-  try {
-    await axios.post(
-      'https://api.line.me/v2/bot/message/push',
-      {
-        to: LINE_GROUP_ID,
-        messages: [{ type: 'text', text: text }]
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${LINE_ACCESS_TOKEN}`
-        }
-      }
-    );
-    console.log('✅ LINEメッセージ送信成功');
-  } catch (error) {
-    console.error('❌ LINEメッセージ送信エラー:', error.response?.data || error);
+async function getNextAvailableRow(spreadsheetId, sheetName, column) {
+  const range = `${sheetName}!${column}6:${column}1000`;
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = response.data.values || [];
+  for (let i = 0; i < rows.length; i++) {
+    if (!rows[i][0]) return 6 + i;
   }
+  return 6 + rows.length;
+}
+
+async function getNextSheetNumber(spreadsheetId, sheetName, column) {
+  const range = `${sheetName}!${column}6:${column}1000`;
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = response.data.values || [];
+  let max = 0;
+  for (let row of rows) {
+    if (row[0] && row[0].startsWith('#')) {
+      const num = parseInt(row[0].replace('#', ''));
+      if (!isNaN(num) && num > max) max = num;
+    }
+  }
+  return max + 1;
 }
 
 client.once(Events.ClientReady, () => {
   console.log(`✅ ログイン成功：${client.user.tag}`);
 });
 
+client.on(Events.InteractionCreate, async interaction => {
+  if (interaction.isChatInputCommand() && interaction.commandName === 'setup-button') {
+    await interaction.deferReply({ flags: 64 });
 
-// ====== LINE Webhook サーバーを統合 ======
-const app = express();
-app.use(express.json());
+    const button = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('open_thread_modal')
+        .setLabel('🆕 スレッドを新規作成する')
+        .setStyle(1)
+    );
 
-app.post('/webhook', (req, res) => {
-  console.log('✅ LINE Webhook受信:', JSON.stringify(req.body, null, 2));
-  const event = req.body.events?.[0];
-  const source = event?.source;
+    await interaction.channel.send({
+      content: '✨ **新しい案件スレッドを作成したい方はこちら！** ✨',
+      components: [button]
+    });
 
-  if (source?.type === 'group') {
-    console.log('✅ LINEグループID:', source.groupId);
+    await interaction.editReply({ content: '✅ ボタンを設置しました！' });
   }
 
-  res.sendStatus(200);
-});
+  if (interaction.isButton() && interaction.customId === 'open_thread_modal') {
+    const modal = new ModalBuilder()
+      .setCustomId('create_thread_modal')
+      .setTitle('スレッド作成')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('title')
+            .setLabel('動画タイトル')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+    await interaction.showModal(modal);
+  }
 
-app.get('/', (_, res) => {
-  res.send('Discord Bot + LINE Webhook 動作中');
-});
+  if (interaction.isModalSubmit() && interaction.customId === 'create_thread_modal') {
+    await interaction.deferReply({ flags: 64 });
+    const title = interaction.fields.getTextInputValue('title');
+    const { type, config } = getCategoryAndType(interaction.channelId) || {};
+    if (!type) return await interaction.editReply('❌ チャンネルが未対応です');
+    const spreadsheetId = config.spreadsheetId;
+    const sheetName = config.sheetNames[type];
+    const overallSheet = config.sheetNames.overall;
+    const numCol = type === 'short' ? 'E' : 'F';
+    const titleCol = type === 'short' ? 'F' : 'G';
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🌐 Expressサーバー起動中（ポート ${PORT}）`);
-});
+    const row = await getNextAvailableRow(spreadsheetId, sheetName, numCol);
+    const num = await getNextSheetNumber(spreadsheetId, sheetName, numCol);
+    const overallRow = await getNextAvailableRow(spreadsheetId, overallSheet, 'F');
+    const threadName = `#${num}_${title}`;
 
-client.on(Events.InteractionCreate, async interaction => {
-  if (interaction.isStringSelectMenu()) {
-    const [prefix, spreadsheetId, sheetName, overallSheet, type, row, overallRow] = interaction.customId.split('|');
-    const selected = interaction.values[0];
-    const config = Object.values(CATEGORY_CONFIG).find(cfg => cfg.spreadsheetId === spreadsheetId);
+    const thread = await interaction.channel.threads.create({
+      name: threadName,
+      autoArchiveDuration: 10080,
+      reason: '新規スレッド作成'
+    });
+    await thread.send(threadName);
 
-    if (prefix === 'select_date') {
-      if (selected === 'none') {
-        await interaction.reply({ content: '✅ 入力をスキップしました。', flags: 64 });
-        return;
-      }
-      const date = formatDateFromOption(selected);
-      const col = type === 'short' ? 'G' : 'H';
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!${numCol}${row}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [[`#${num}`]] }
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!${titleCol}${row}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [[title]] }
+    });
 
+    if (config.hasOverallSheet) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!${col}${row}`,
+        range: `${overallSheet}!F${overallRow}`,
         valueInputOption: 'USER_ENTERED',
-        resource: { values: [[date]] }
+        resource: { values: [[`#${num}`]] }
       });
-
-      if (config?.hasOverallSheet) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `${overallSheet}!${col}${overallRow}`,
-          valueInputOption: 'USER_ENTERED',
-          resource: { values: [[date]] }
-        });
-      }
-
-      await interaction.reply({ content: `📅 初稿提出日を ${date} に設定しました。`, flags: 64 });
-    }
-
-    if (prefix === 'select_editor') {
-      const col = type === 'short' ? 'H' : 'I';
-
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!${col}${row}`,
+        range: `${overallSheet}!G${overallRow}`,
         valueInputOption: 'USER_ENTERED',
-        resource: { values: [[selected]] }
+        resource: { values: [[title]] }
       });
-
-      if (config?.hasOverallSheet) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `${overallSheet}!${col}${overallRow}`,
-          valueInputOption: 'USER_ENTERED',
-          resource: { values: [[selected]] }
-        });
-      }
-
-      await interaction.reply({ content: `🎬 担当者を「${selected}」に設定しました。`, flags: 64 });
     }
 
-    if (prefix === 'select_thumb') {
-      const col = 'K';
+    await interaction.editReply(`✅ スレッド ${threadName} を作成しました！`);
+  }
 
+  if (interaction.isChatInputCommand() && interaction.commandName === '動画ステータス') {
+    const status = interaction.options.getString('状態');
+    const title = interaction.channel.name;
+    const { type, config } = getCategoryAndType(interaction.channelId) || {};
+    if (!type) return await interaction.reply({ content: '❌ チャンネルが未対応です', flags: 64 });
+    const spreadsheetId = config.spreadsheetId;
+    const sheetName = config.sheetNames[type];
+    const overallSheet = config.sheetNames.overall;
+    const rangeCol = status === '初稿' ? 'A' : status === '修正' ? 'B' : status === '納品' ? 'C' : status === '投稿' ? 'E' : null;
+    const titleCol = type === 'short' ? 'F' : 'G';
+
+    if (!rangeCol) return await interaction.reply({ content: '❌ 状態が不正です', flags: 64 });
+
+    const range = `${sheetName}!${titleCol}6:${titleCol}1000`;
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    const rows = response.data.values || [];
+    let foundRow = null;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][0] && title.includes(rows[i][0])) {
+        foundRow = 6 + i;
+        break;
+      }
+    }
+    if (!foundRow) return await interaction.reply({ content: '❌ スレッドに対応する行が見つかりません', flags: 64 });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!${rangeCol}${foundRow}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [['TRUE']] }
+    });
+    if (config.hasOverallSheet) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!${col}${row}`,
+        range: `${overallSheet}!${rangeCol}${foundRow}`,
         valueInputOption: 'USER_ENTERED',
-        resource: { values: [[selected]] }
+        resource: { values: [['TRUE']] }
       });
-
-      if (config?.hasOverallSheet) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `${overallSheet}!${col}${overallRow}`,
-          valueInputOption: 'USER_ENTERED',
-          resource: { values: [[selected]] }
-        });
-      }
-
-      await interaction.reply({ content: `🖼 サムネイル担当を「${selected}」に設定しました。`, flags: 64 });
     }
+
+    await interaction.reply({ content: `✅ ステータス「${status}」を TRUE に設定しました`, flags: 64 });
   }
 });
 
