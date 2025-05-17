@@ -1,13 +1,10 @@
+// Discord Bot スレッド作成・シート記入・初稿UI表示まで対応済みコード
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { google } = require('googleapis');
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 const TOKEN = process.env.TOKEN;
@@ -63,20 +60,7 @@ const auth = new google.auth.GoogleAuth({
     'https://www.googleapis.com/auth/drive'
   ]
 });
-
 const sheets = google.sheets({ version: 'v4', auth });
-
-function formatDateFromOption(option) {
-  const today = new Date();
-  switch (option) {
-    case 'today': return today.toISOString().split('T')[0];
-    case 'tomorrow': today.setDate(today.getDate() + 1); break;
-    case 'dayAfterTomorrow': today.setDate(today.getDate() + 2); break;
-    case 'nextWeek': today.setDate(today.getDate() + 7); break;
-    default: return '';
-  }
-  return today.toISOString().split('T')[0];
-}
 
 async function getNextAvailableRow(spreadsheetId, sheetName, column) {
   const range = `${sheetName}!${column}6:${column}1000`;
@@ -108,44 +92,37 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand() && interaction.commandName === 'setup-button') {
-    await interaction.deferReply({ flags: 64 });
-
+    await interaction.deferReply({ ephemeral: true });
     const button = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('open_thread_modal')
         .setLabel('🆕 スレッドを新規作成する')
         .setStyle(1)
     );
-
-    await interaction.channel.send({
-      content: '✨ **新しい案件スレッドを作成したい方はこちら！** ✨',
-      components: [button]
-    });
-
-    await interaction.editReply({ content: '✅ ボタンを設置しました！' });
+    await interaction.channel.send({ content: '✨ **新しい案件スレッドを作成したい方はこちら！** ✨', components: [button] });
+    await interaction.editReply('✅ ボタンを設置しました！');
   }
 
   if (interaction.isButton() && interaction.customId === 'open_thread_modal') {
     const modal = new ModalBuilder()
       .setCustomId('create_thread_modal')
       .setTitle('スレッド作成')
-      .addComponents(
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId('title')
-            .setLabel('動画タイトル')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        )
-      );
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('title')
+          .setLabel('動画タイトル')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ));
     await interaction.showModal(modal);
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'create_thread_modal') {
-    await interaction.deferReply({ flags: 64 });
+    await interaction.deferReply({ ephemeral: true });
     const title = interaction.fields.getTextInputValue('title');
-    const { type, config } = getCategoryAndType(interaction.channelId) || {};
+    const { category, type, config } = getCategoryAndType(interaction.channelId) || {};
     if (!type) return await interaction.editReply('❌ チャンネルが未対応です');
+
     const spreadsheetId = config.spreadsheetId;
     const sheetName = config.sheetNames[type];
     const overallSheet = config.sheetNames.overall;
@@ -154,9 +131,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const row = await getNextAvailableRow(spreadsheetId, sheetName, numCol);
     const num = await getNextSheetNumber(spreadsheetId, sheetName, numCol);
-    const overallRow = await getNextAvailableRow(spreadsheetId, overallSheet, 'F');
-    const threadName = `#${num}_${title}`;
+    const overallRow = config.hasOverallSheet ? await getNextAvailableRow(spreadsheetId, overallSheet, 'F') : null;
+    const overallNum = config.hasOverallSheet ? await getNextSheetNumber(spreadsheetId, overallSheet, 'F') : null;
 
+    const threadName = `#${overallNum}_${title}`;
     const thread = await interaction.channel.threads.create({
       name: threadName,
       autoArchiveDuration: 10080,
@@ -182,7 +160,7 @@ client.on(Events.InteractionCreate, async interaction => {
         spreadsheetId,
         range: `${overallSheet}!F${overallRow}`,
         valueInputOption: 'USER_ENTERED',
-        resource: { values: [[`#${num}`]] }
+        resource: { values: [[`#${overallNum}`]] }
       });
       await sheets.spreadsheets.values.update({
         spreadsheetId,
@@ -193,49 +171,10 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     await interaction.editReply(`✅ スレッド ${threadName} を作成しました！`);
-  }
 
-  if (interaction.isChatInputCommand() && interaction.commandName === '動画ステータス') {
-    const status = interaction.options.getString('状態');
-    const title = interaction.channel.name;
-    const { type, config } = getCategoryAndType(interaction.channelId) || {};
-    if (!type) return await interaction.reply({ content: '❌ チャンネルが未対応です', flags: 64 });
-    const spreadsheetId = config.spreadsheetId;
-    const sheetName = config.sheetNames[type];
-    const overallSheet = config.sheetNames.overall;
-    const rangeCol = status === '初稿' ? 'A' : status === '修正' ? 'B' : status === '納品' ? 'C' : status === '投稿' ? 'E' : null;
-    const titleCol = type === 'short' ? 'F' : 'G';
-
-    if (!rangeCol) return await interaction.reply({ content: '❌ 状態が不正です', flags: 64 });
-
-    const range = `${sheetName}!${titleCol}6:${titleCol}1000`;
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-    const rows = response.data.values || [];
-    let foundRow = null;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] && title.includes(rows[i][0])) {
-        foundRow = 6 + i;
-        break;
-      }
-    }
-    if (!foundRow) return await interaction.reply({ content: '❌ スレッドに対応する行が見つかりません', flags: 64 });
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${sheetName}!${rangeCol}${foundRow}`,
-      valueInputOption: 'USER_ENTERED',
-      resource: { values: [['TRUE']] }
-    });
-    if (config.hasOverallSheet) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `${overallSheet}!${rangeCol}${foundRow}`,
-        valueInputOption: 'USER_ENTERED',
-        resource: { values: [['TRUE']] }
-      });
-    }
-
-    await interaction.reply({ content: `✅ ステータス「${status}」を TRUE に設定しました`, flags: 64 });
+    await thread.send('📅 **初稿提出日を選んでください**');
+    await thread.send('🎬 **担当者を選んでください**');
+    await thread.send('🖼 **サムネ担当を選んでください**');
   }
 });
 
