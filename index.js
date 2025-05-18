@@ -105,6 +105,20 @@ async function getNextSheetNumber(spreadsheetId, sheetName, column) {
   return max + 1;
 }
 
+async function getNextOverallNumber(spreadsheetId, overallSheet) {
+  const range = `${overallSheet}!F6:F1000`;
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = response.data.values || [];
+  let max = 0;
+  for (let row of rows) {
+    if (row[0] && row[0].startsWith('#')) {
+      const num = parseInt(row[0].replace('#', ''));
+      if (!isNaN(num) && num > max) max = num;
+    }
+  }
+  return max + 1;
+}
+
 async function getEditorOptions(spreadsheetId, sheetName, column) {
   const range = `${sheetName}!${column}6:${column}1000`;
   const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -178,15 +192,16 @@ client.on(Events.InteractionCreate, async interaction => {
       resource: { values: [[title]] }
     });
 
-    // 全体管理（martinのみ）に記入
+    // 全体シート（martinのみ）
     let overallRow = null;
     if (config.hasOverallSheet) {
       overallRow = await getNextAvailableRow(spreadsheetId, overallSheet, 'F');
+      const overallNumber = await getNextOverallNumber(spreadsheetId, overallSheet);
       await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `${overallSheet}!F${overallRow}`,
         valueInputOption: 'USER_ENTERED',
-        resource: { values: [[`#${num + 1000}`]] } // ← 全体番号別管理（例：+1000）にする場合は調整
+        resource: { values: [[`#${overallNumber}`]] }
       });
       await sheets.spreadsheets.values.update({
         spreadsheetId,
@@ -198,7 +213,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     await interaction.editReply(`✅ スレッド ${threadName} を作成しました！`);
 
-    // 選択メニュー表示
+    // 選択メニュー送信
     const dateMenu = new StringSelectMenuBuilder()
       .setCustomId(`select_date|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
       .setPlaceholder('初稿提出日を選んでください')
