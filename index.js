@@ -1,5 +1,3 @@
-// Discord Bot フルコード：スレッド作成・初稿UI・動画ステータス記入・全体シート対応
-
 require('dotenv').config();
 const {
   Client,
@@ -54,7 +52,9 @@ const CATEGORY_CONFIG = {
 function getCategoryAndType(channelId) {
   for (const [category, config] of Object.entries(CATEGORY_CONFIG)) {
     for (const [type, id] of Object.entries(config.channels)) {
-      if (id === channelId) return { category, type, config };
+      if (id === channelId) {
+        return { category, type, config };
+      }
     }
   }
   return null;
@@ -65,12 +65,8 @@ const auth = new google.auth.GoogleAuth({
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
     private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
   },
-  scopes: [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
-  ]
+  scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 });
-
 const sheets = google.sheets({ version: 'v4', auth });
 
 function formatDateFromOption(option) {
@@ -87,8 +83,8 @@ function formatDateFromOption(option) {
 
 async function getNextAvailableRow(spreadsheetId, sheetName, column) {
   const range = `${sheetName}!${column}6:${column}1000`;
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = res.data.values || [];
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = response.data.values || [];
   for (let i = 0; i < rows.length; i++) {
     if (!rows[i][0]) return 6 + i;
   }
@@ -97,8 +93,8 @@ async function getNextAvailableRow(spreadsheetId, sheetName, column) {
 
 async function getNextSheetNumber(spreadsheetId, sheetName, column) {
   const range = `${sheetName}!${column}6:${column}1000`;
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = res.data.values || [];
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = response.data.values || [];
   let max = 0;
   for (let row of rows) {
     if (row[0] && row[0].startsWith('#')) {
@@ -111,9 +107,9 @@ async function getNextSheetNumber(spreadsheetId, sheetName, column) {
 
 async function getEditorOptions(spreadsheetId, sheetName, column) {
   const range = `${sheetName}!${column}6:${column}1000`;
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = res.data.values || [];
-  const names = [...new Set(rows.flat().filter(Boolean))];
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = response.data.values || [];
+  const names = [...new Set(rows.flat().filter(name => !!name))];
   return names.slice(0, 25).map(name => new StringSelectMenuOptionBuilder().setLabel(name).setValue(name));
 }
 
@@ -123,12 +119,14 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand() && interaction.commandName === 'setup-button') {
-    await interaction.deferReply({ ephemeral: true });
-    const button = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('open_thread_modal').setLabel('🆕 スレッドを新規作成する').setStyle(1)
-    );
-    await interaction.channel.send({ content: '✨ **新しい案件スレッドを作成したい方はこちら！** ✨', components: [button] });
-    await interaction.editReply('✅ ボタンを設置しました！');
+    await interaction.reply({
+      content: '✨ **新しい案件スレッドを作成したい方はこちら！** ✨',
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('open_thread_modal').setLabel('🆕 スレッド作成').setStyle(1)
+        )
+      ]
+    });
   }
 
   if (interaction.isButton() && interaction.customId === 'open_thread_modal') {
@@ -137,99 +135,185 @@ client.on(Events.InteractionCreate, async interaction => {
       .setTitle('スレッド作成')
       .addComponents(
         new ActionRowBuilder().addComponents(
-          new TextInputBuilder().setCustomId('title').setLabel('動画タイトル').setStyle(TextInputStyle.Short).setRequired(true)
+          new TextInputBuilder().setCustomId('title').setLabel('動画タイトル').setStyle(TextInputStyle.Short)
         )
       );
     await interaction.showModal(modal);
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'create_thread_modal') {
-    try {
-      await interaction.deferReply({ ephemeral: true });
-      const title = interaction.fields.getTextInputValue('title');
-      const { type, config, category } = getCategoryAndType(interaction.channelId) || {};
-      if (!type) return await interaction.editReply('❌ チャンネルが未対応です');
+    await interaction.deferReply({ ephemeral: true });
+    const title = interaction.fields.getTextInputValue('title');
+    const { type, config, category } = getCategoryAndType(interaction.channelId) || {};
+    if (!type) return await interaction.editReply('❌ チャンネルが未対応です');
 
-      const spreadsheetId = config.spreadsheetId;
-      const sheetName = config.sheetNames[type];
-      const overallSheet = config.sheetNames.overall;
-      const numCol = type === 'short' ? 'E' : 'F';
-      const titleCol = type === 'short' ? 'F' : 'G';
+    const spreadsheetId = config.spreadsheetId;
+    const sheetName = config.sheetNames[type];
+    const overallSheet = config.sheetNames.overall;
+    const numCol = type === 'short' ? 'E' : 'F';
+    const titleCol = type === 'short' ? 'F' : 'G';
 
-      const row = await getNextAvailableRow(spreadsheetId, sheetName, numCol);
-      const num = await getNextSheetNumber(spreadsheetId, sheetName, numCol);
-      const overallRow = config.hasOverallSheet ? await getNextAvailableRow(spreadsheetId, overallSheet, 'F') : null;
-      const threadName = `#${num}_${title}`;
+    const row = await getNextAvailableRow(spreadsheetId, sheetName, numCol);
+    const num = await getNextSheetNumber(spreadsheetId, sheetName, numCol);
+    const threadName = `#${num}_${title}`;
 
-      const thread = await interaction.channel.threads.create({
-        name: threadName,
-        autoArchiveDuration: 10080,
-        reason: '新規スレッド作成'
-      });
-      await thread.send(threadName);
+    const thread = await interaction.channel.threads.create({
+      name: threadName,
+      autoArchiveDuration: 10080,
+      reason: '新規スレッド作成'
+    });
+    await thread.send(threadName);
 
-      await sheets.spreadsheets.values.batchUpdate({
+    // ショート/長尺に書き込み
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!${numCol}${row}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [[`#${num}`]] }
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!${titleCol}${row}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [[title]] }
+    });
+
+    // 全体管理（martinのみ）に記入
+    let overallRow = null;
+    if (config.hasOverallSheet) {
+      overallRow = await getNextAvailableRow(spreadsheetId, overallSheet, 'F');
+      await sheets.spreadsheets.values.update({
         spreadsheetId,
-        resource: {
-          valueInputOption: 'USER_ENTERED',
-          data: [
-            { range: `${sheetName}!${numCol}${row}`, values: [[`#${num}`]] },
-            { range: `${sheetName}!${titleCol}${row}`, values: [[title]] }
-          ]
-        }
+        range: `${overallSheet}!F${overallRow}`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [[`#${num + 1000}`]] } // ← 全体番号別管理（例：+1000）にする場合は調整
+      });
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${overallSheet}!G${overallRow}`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [[title]] }
+      });
+    }
+
+    await interaction.editReply(`✅ スレッド ${threadName} を作成しました！`);
+
+    // 選択メニュー表示
+    const dateMenu = new StringSelectMenuBuilder()
+      .setCustomId(`select_date|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
+      .setPlaceholder('初稿提出日を選んでください')
+      .addOptions(
+        { label: '今日', value: 'today' },
+        { label: '明日', value: 'tomorrow' },
+        { label: '明後日', value: 'dayAfterTomorrow' },
+        { label: '来週', value: 'nextWeek' },
+        { label: '入力しない', value: 'none' }
+      );
+
+    const editorOptions = await getEditorOptions(spreadsheetId, sheetName, type === 'short' ? 'H' : 'I');
+    const editorMenu = new StringSelectMenuBuilder()
+      .setCustomId(`select_editor|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
+      .setPlaceholder('担当者を選んでください')
+      .addOptions(editorOptions);
+
+    const thumbOptions = await getEditorOptions(spreadsheetId, sheetName, 'K');
+    const thumbMenu = new StringSelectMenuBuilder()
+      .setCustomId(`select_thumb|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
+      .setPlaceholder('サムネイル担当を選んでください')
+      .addOptions(thumbOptions);
+
+    await thread.send({
+      content: '📅 初稿提出日を選択してください：',
+      components: [new ActionRowBuilder().addComponents(dateMenu)]
+    });
+
+    await thread.send({
+      content: '👤 担当者を選んでください：',
+      components: [new ActionRowBuilder().addComponents(editorMenu)]
+    });
+
+    if (type !== 'short') {
+      await thread.send({
+        content: '🖼 サムネイル担当者を選んでください：',
+        components: [new ActionRowBuilder().addComponents(thumbMenu)]
+      });
+    }
+  }
+
+  if (interaction.isStringSelectMenu()) {
+    const [prefix, spreadsheetId, sheetName, overallSheet, type, row, overallRow] = interaction.customId.split('|');
+    const selected = interaction.values[0];
+    const config = Object.values(CATEGORY_CONFIG).find(cfg => cfg.spreadsheetId === spreadsheetId);
+
+    if (prefix === 'select_date') {
+      if (selected === 'none') {
+        await interaction.reply({ content: '✅ 入力をスキップしました。', ephemeral: true });
+        return;
+      }
+      const date = formatDateFromOption(selected);
+      const col = type === 'short' ? 'G' : 'H';
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!${col}${row}`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [[date]] }
       });
 
-      if (config.hasOverallSheet) {
-        await sheets.spreadsheets.values.batchUpdate({
+      if (config?.hasOverallSheet) {
+        await sheets.spreadsheets.values.update({
           spreadsheetId,
-          resource: {
-            valueInputOption: 'USER_ENTERED',
-            data: [
-              { range: `${overallSheet}!F${overallRow}`, values: [[`#${num}`]] },
-              { range: `${overallSheet}!G${overallRow}`, values: [[title]] }
-            ]
-          }
+          range: `${overallSheet}!${col}${overallRow}`,
+          valueInputOption: 'USER_ENTERED',
+          resource: { values: [[date]] }
         });
       }
 
-      const dateMenu = new StringSelectMenuBuilder()
-        .setCustomId(`select_date|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
-        .setPlaceholder('初稿提出日を選んでください')
-        .addOptions(
-          { label: '今日', value: 'today' },
-          { label: '明日', value: 'tomorrow' },
-          { label: '明後日', value: 'dayAfterTomorrow' },
-          { label: '来週', value: 'nextWeek' },
-          { label: '入力しない（スキップ）', value: 'none' }
-        );
+      await interaction.reply({ content: `📅 初稿提出日を ${date} に設定しました。`, ephemeral: true });
+    }
 
-      const editorOptions = await getEditorOptions(spreadsheetId, sheetName, type === 'short' ? 'H' : 'I');
-      const thumbOptions = type === 'short' ? [] : await getEditorOptions(spreadsheetId, sheetName, 'K');
+    if (prefix === 'select_editor') {
+      const col = type === 'short' ? 'H' : 'I';
 
-      const editorMenu = new StringSelectMenuBuilder()
-        .setCustomId(`select_editor|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
-        .setPlaceholder('担当者を選んでください')
-        .addOptions(editorOptions);
-
-      const thumbMenu = new StringSelectMenuBuilder()
-        .setCustomId(`select_thumb|${spreadsheetId}|${sheetName}|${overallSheet}|${type}|${row}|${overallRow}`)
-        .setPlaceholder('サムネ担当を選んでください')
-        .addOptions(thumbOptions);
-
-      const components = [
-        new ActionRowBuilder().addComponents(dateMenu),
-        new ActionRowBuilder().addComponents(editorMenu)
-      ];
-      if (thumbOptions.length > 0) components.push(new ActionRowBuilder().addComponents(thumbMenu));
-
-      await thread.send({
-        content: `📅 初稿提出日を選択してください：\n👤 担当者を選んでください：\n${thumbOptions.length > 0 ? '🖼 サムネイル担当者を選んでください：' : ''}`,
-        components
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!${col}${row}`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [[selected]] }
       });
 
-      await interaction.editReply(`✅ スレッド ${threadName} を作成しました！`);
-    } catch (error) {
-      console.error('❌ モーダル処理エラー:', error);
+      if (config?.hasOverallSheet) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${overallSheet}!${col}${overallRow}`,
+          valueInputOption: 'USER_ENTERED',
+          resource: { values: [[selected]] }
+        });
+      }
+
+      await interaction.reply({ content: `🎬 担当者を「${selected}」に設定しました。`, ephemeral: true });
+    }
+
+    if (prefix === 'select_thumb') {
+      const col = 'K';
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!${col}${row}`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [[selected]] }
+      });
+
+      if (config?.hasOverallSheet) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${overallSheet}!${col}${overallRow}`,
+          valueInputOption: 'USER_ENTERED',
+          resource: { values: [[selected]] }
+        });
+      }
+
+      await interaction.reply({ content: `🖼 サムネイル担当を「${selected}」に設定しました。`, ephemeral: true });
     }
   }
 });
